@@ -260,7 +260,8 @@
         <div class="hint">Click any bar or flow to read the reports behind it.</div>
       </div>
       <div class="toggle" role="group" aria-label="Middle column">
-        <button type="button" data-view="A" aria-pressed="true">What contributed</button>
+        <button type="button" data-view="A" aria-pressed="true">Human vs. environment</button>
+        <button type="button" data-view="C" aria-pressed="false">Factor families</button>
         <button type="button" data-view="B" aria-pressed="false">What they were doing</button>
       </div>
     </div>
@@ -280,7 +281,7 @@
 
 <footer>
   <p><a href="https://github.com/ecaroom/climbing-accidents">Data: an analysis of the AAC's climbing accident reports by Eliot Caroom (CC BY 4.0)</a></p>
-  <p>Accidents tagged with more than one discipline count fractionally toward each in the chart (an accident tagged Ice + Mountaineering adds ½ to each); the report viewer lists every report carrying the tag. Outcome is the most severe outcome in the report. 46 non-climbing incidents are excluded.</p>
+  <p>Accidents tagged with more than one discipline count fractionally toward each in the chart (an accident tagged Ice + Mountaineering adds ½ to each); the report viewer lists every report carrying the tag. In the factor-families view, each report is also split across the families of factors it was tagged with (a report with gear and weather factors adds ½ to each). Outcome is the most severe outcome in the report. 46 non-climbing incidents are excluded.</p>
 </footer>
 </div>
 
@@ -401,7 +402,7 @@
   const [data, accidents] = await Promise.all([d3.json("sankey.json"), d3.json("accidents.json")]);
   const discById = new Map(data.disciplines.map(d => [d.id, d]));
   const outById = new Map(data.outcomes.map(o => [o.id, o]));
-  const VIEW_COL = { A: "factor_mix", B: "activity" };
+  const VIEW_COL = { A: "factor_mix", B: "activity", C: "factor_families" };   // C is a list per accident
   const fmt = v => Math.abs(v - Math.round(v)) < 0.05 ? d3.format(",")(Math.round(v)) : d3.format(",.1f")(v);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const discColor = id => discById.get(id).outline ? "#cfcdc5" : discById.get(id).ramp[2];
@@ -558,7 +559,10 @@
              "<br><span style='opacity:.7'>Click to read these reports</span>";
     }
     const fatal = n.stage === 1 ? n.sourceLinks.filter(l => l.target.id === "o:fatal").reduce((s, l) => s + l.value, 0) : null;
-    return `<b>${n.label}</b><br>${fmt(n.value)} accidents` + (fatal !== null ? `<br>${d3.format(".0%")(fatal / n.value)} fatal` : "") +
+    const counted = n.n_any != null && n.n_any !== Math.round(n.value)
+      ? `${d3.format(",")(n.n_any)} accidents involve ${n.label.toLowerCase()}<br>${fmt(n.value)} after splitting reports across families`
+      : `${fmt(n.value)} accidents`;
+    return `<b>${n.label}</b><br>${counted}` + (fatal !== null ? `<br>${d3.format(".0%")(fatal / n.value)} fatal` : "") +
            "<br><span style='opacity:.7'>Click to read these reports</span>";
   }
   function showTip(ev, html) {
@@ -606,7 +610,10 @@
   function matchesFilter(a, f) {
     if (!f) return true;
     if (f.discipline && !a.disciplines.includes(f.discipline)) return false;
-    if (f.mid && a[VIEW_COL[f.mid.view]] !== f.mid.key) return false;
+    if (f.mid) {
+      const v = a[VIEW_COL[f.mid.view]];
+      if (Array.isArray(v) ? !v.includes(f.mid.key) : v !== f.mid.key) return false;
+    }
     if (f.outcome && a.worst_outcome !== f.outcome) return false;
     if (f.ids && !f.ids.has(a.id)) return false;
     if (f.factor && !a.factors.includes(f.factor)) return false;

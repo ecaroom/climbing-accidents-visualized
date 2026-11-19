@@ -30,7 +30,16 @@ check("each accident in exactly one activity / mix / outcome",
 check("outcome counts", acc.worst_outcome.value_counts().to_dict() == {"serious": 1776, "fatal": 544, "minor": 215, "none": 189})
 
 # ---- sankey reconciliation, per view
-expected_mid = {"A": acc.factor_mix.value_counts(), "B": acc.activity.value_counts()}
+# view C splits each accident across its factor families, so its middle nodes hold weighted sizes
+fam = acc.assign(family=acc.factor_families.str.split(";")).explode("family")
+fam_w = fam.assign(w=1 / fam.n_factor_families.clip(lower=1)).groupby("family").w.sum()
+expected_mid = {"A": acc.factor_mix.value_counts(), "B": acc.activity.value_counts(), "C": fam_w}
+check("every accident's family weights sum to 1",
+      (fam.assign(w=1 / fam.n_factor_families.clip(lower=1)).groupby("id").w.sum().sub(1).abs() < 1e-9).all())
+check("view C family any-tag counts",
+      all(n["n_any"] == (fam.family == n["id"].split(":")[1]).sum()
+          for n in sk["views"]["C"]["nodes"] if n["stage"] == 1))
+check("three views", set(sk["views"]) == {"A", "B", "C"})
 for v, view in sk["views"].items():
     nodes = {n["id"]: n for n in view["nodes"]}
     inflow, outflow = collections.Counter(), collections.Counter()
@@ -45,7 +54,7 @@ for v, view in sk["views"].items():
         if n["stage"] == 1:
             check(f"{v} {nid} in == out", abs(inflow[nid] - outflow[nid]) < TOL, (inflow[nid], outflow[nid]))
             check(f"{v} {nid} == accident count", abs(inflow[nid] - expected_mid[v][nid.split(':')[1]]) < TOL)
-            check(f"{v} {nid} n field", n["n"] == expected_mid[v][nid.split(':')[1]])
+            check(f"{v} {nid} n field", abs(n["n"] - expected_mid[v][nid.split(':')[1]]) < 0.06)
     for o in sk["outcomes"]:
         check(f"{v} outcome {o['id']}", abs(inflow[f"o:{o['id']}"] - o["n"]) < TOL, (inflow[f"o:{o['id']}"], o["n"]))
     # per discipline: weighted outflow from discipline == weighted inflow to outcomes for that discipline

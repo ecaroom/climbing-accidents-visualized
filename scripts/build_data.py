@@ -62,9 +62,29 @@ DISCIPLINES = [
 ]
 DISC_COL = {d[0]: d[2] for d in DISCIPLINES if d[2]}
 
+# View C: the 48 factor tags grouped into seven families (approved 2026-11-19, "Option 1").
+# Human-side families first, then environment, mirroring view A's order.
+FACTOR_FAMILIES = [
+    ("gear", "Protection & gear", ["Inadequate Protection / Pulled", "Gear Broke", "Piton/Ice Screw", "Crampon Issues",
+                                   "Inadequate Equipment", "No Helmet", "Run Out"]),
+    ("rope", "Rope & belay systems", ["Belay Error", "Rappel Error", "Lowering Error", "Knot & Tie-in Error",
+                                      "No Backup or End Knot", "Anchor Failure / Error", "Miscommunication", "Pendulum"]),
+    ("decisions", "Decisions & timing", ["Off-route", "Rushed", "Late Start", "Late in Day", "Party Separated",
+                                         "Large Group", "Crowds", "Distracted", "Intoxicated", "Stranded / Lost / Overdue",
+                                         "Poor Position", "Gym Climber", "Gym / Artificial"]),
+    ("movement", "Movement & terrain", ["Handhold/Foothold Broke", "Ledge Fall", "Glissading", "Ski-related",
+                                        "Object Dropped/Dislodged"]),
+    ("body", "Body & health", ["Fatigue", "Inadequate Food/Water", "Ascent Illness", "Non-Ascent Illness"]),
+    ("weather", "Weather & conditions", ["Severe Weather", "Visibility", "Exposure", "Poor Cond/Seasonal Risk"]),
+    ("hazards", "Mountain hazards", ["Avalanche", "Icefall / Serac / Ice Avalanche", "Cornice / Snow Bridge Collapse",
+                                     "Crevasse / Moat / Berschrund", "Bergschrund", "Natural Rockfall", "Wildlife"]),
+]
+FAMILY_OF = {t: k for k, _, tags in FACTOR_FAMILIES for t in tags}
+
 MIDDLE = {
-    "A": ("What contributed", [("human", "Human only"), ("both", "Human + environment"),
-                               ("env", "Environment only"), ("nofactor", "No factor tagged")]),
+    "A": ("Human vs. environment", [("human", "Human only"), ("both", "Human + environment"),
+                                    ("env", "Environment only"), ("nofactor", "No factor tagged")]),
+    "C": ("Factor families", [(k, lab) for k, lab, _ in FACTOR_FAMILIES] + [("nofactor", "No factor tagged")]),
     "B": ("What they were doing", [("roped", "Roped ascent"), ("descent", "Descent"),
                                    ("unroped", "Unroped / solo ascent"), ("unclear", "Unclear")]),
 }
@@ -138,6 +158,10 @@ def build():
     out["n_human_factors"] = f[HUMAN].sum(axis=1)
     out["n_env_factors"] = f[ENVIRONMENT].sum(axis=1)
     out["factors"] = [";".join(t for t in HUMAN + ENVIRONMENT if f.at[i, t]) for i in range(len(f))]
+    assert set(FAMILY_OF) == set(HUMAN + ENVIRONMENT), "every factor tag must be in exactly one family"
+    fams = [[k for k, _, tags in FACTOR_FAMILIES if any(f.at[i, t] for t in tags)] or ["nofactor"] for i in range(len(f))]
+    out["factor_families"] = [";".join(x) for x in fams]
+    out["n_factor_families"] = [0 if x == ["nofactor"] else len(x) for x in fams]
 
     out["deadly"], out["serious"], out["minor"] = (f[c].astype(int) for c in ["Deadly", "Serious", "Minor"])
     out["head_injury"] = f["Head / Brain Injury"].astype(int)
@@ -181,12 +205,17 @@ def sankey(out):
     exploded = out.assign(discipline=out.disciplines.str.split(";")).explode("discipline")
     views = {}
     for v, (title, mids) in MIDDLE.items():
-        col = "factor_mix" if v == "A" else "activity"
+        col = {"A": "factor_mix", "B": "activity", "C": "family"}[v]
+        if v == "C":   # also split each accident across its factor families: weight = 1/n_disc * 1/n_fam
+            ex = exploded.assign(family=exploded.factor_families.str.split(";")).explode("family")
+            ex = ex.assign(w=ex.discipline_weight / ex.n_factor_families.clip(lower=1))
+        else:
+            ex = exploded.assign(w=exploded.discipline_weight)
         mid_nodes = [{"id": f"m{v}:{k}", "label": lab, "stage": 1, "slot": i} for i, (k, lab) in enumerate(mids)]
         links = []
-        for (d, m), w in exploded.groupby(["discipline", col]).discipline_weight.sum().items():
+        for (d, m), w in ex.groupby(["discipline", col]).w.sum().items():
             links.append({"source": f"d:{d}", "target": f"m{v}:{m}", "discipline": d, "value": round(float(w), 6)})
-        for (d, m, o), w in exploded.groupby(["discipline", col, "worst_outcome"]).discipline_weight.sum().items():
+        for (d, m, o), w in ex.groupby(["discipline", col, "worst_outcome"]).w.sum().items():
             links.append({"source": f"m{v}:{m}", "target": f"o:{o}", "discipline": d, "value": round(float(w), 6)})
         order_d = {k: i for i, (k, *_r) in enumerate(DISCIPLINES)}
         order_m = {k: i for i, (k, _) in enumerate(mids)}
@@ -199,9 +228,17 @@ def sankey(out):
                 return (0, order_d[l["discipline"]], order_m[l["target"].split(":")[1]], 0)
             return (1, order_m[l["source"].split(":")[1]], order_o[l["target"].split(":")[1]], order_d[l["discipline"]])
         links.sort(key=key)
-        counts = out[col].value_counts()
-        for n in mid_nodes:
-            n["n"] = int(counts.get(n["id"].split(":")[1], 0))
+        if v == "C":   # n = weighted size (what the bar shows); n_any = accidents with any tag in the family
+            per_acc = out.assign(family=out.factor_families.str.split(";")).explode("family")
+            per_acc = per_acc.assign(w=1 / per_acc.n_factor_families.clip(lower=1))
+            wsum, anyc = per_acc.groupby("family").w.sum(), per_acc.family.value_counts()
+            for n in mid_nodes:
+                k = n["id"].split(":")[1]
+                n["n"], n["n_any"] = round(float(wsum.get(k, 0)), 1), int(anyc.get(k, 0))
+        else:
+            counts = out[col].value_counts()
+            for n in mid_nodes:
+                n["n"] = int(counts.get(n["id"].split(":")[1], 0))
         views[v] = {"title": title, "nodes": disc_nodes + mid_nodes + out_nodes, "links": links}
 
     any_tag = exploded.discipline.value_counts()
@@ -212,7 +249,8 @@ def sankey(out):
             "n_accidents": int(len(out)),
             "source": REPO_URL,
             "attribution": "Data: an analysis of the AAC's climbing accident reports by Eliot Caroom (CC BY 4.0)",
-            "weighting": "Accidents with n disciplines contribute 1/n to each. Middle and outcome stages are exclusive.",
+            "weighting": "Accidents with n disciplines contribute 1/n to each. In view C, each accident's share is also "
+                         "split across its n factor families. Other middle stages and the outcome stage are exclusive.",
         },
         "disciplines": [{"id": k, "label": lab, "ramp": ramp, "outline": ramp is None,
                          "n_any": int(any_tag.get(k, 0)), "n_weighted": round(float(weighted.get(k, 0)), 1)}
@@ -230,9 +268,10 @@ def main():
     long.to_csv(CLEAN / "accident_tags.csv", index=False, encoding="utf-8")
     (SITE / "sankey.json").write_text(json.dumps(sankey(out), indent=1), encoding="utf-8")
     lite = out[["id", "pub_year", "title", "disciplines", "activity", "factor_mix", "worst_outcome",
-                "party_size", "n_tags", "factors", "region", "location_line", "months", "experience",
+                "party_size", "n_tags", "factors", "factor_families", "region", "location_line", "months", "experience",
                 "is_climbing_alone", "is_solo", "is_large_group", "is_late_in_day", "is_late_start", "is_visibility",
                 "cue_gap", "cue_new_area", "cue_new_style"]].copy()
+    lite["factor_families"] = lite.factor_families.str.split(";")
     lite["months"] = lite.months.map(lambda s: [t for t in s.split(";") if t])
     lite["experience"] = lite.experience.map(lambda s: [t for t in s.split(";") if t])
     lite["disciplines"] = lite.disciplines.str.split(";")
