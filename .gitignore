@@ -1,0 +1,8 @@
+# upstream dataset: clone separately (see README)
+source/
+# regenerable raw exports (scripts/export_raw.py)
+data/raw/
+.venv/
+__pycache__/
+.claude/
+.DS_Store
