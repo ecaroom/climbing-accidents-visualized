@@ -44,6 +44,17 @@
   .chart-head h2 { font-size: .95rem; font-weight: 600; margin: 0; }
   .chart-head .sub { font-size: .8rem; color: var(--ink-3); }
   .hint { font-size: .75rem; color: var(--ink-3); margin-top: 4px; }
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .simplify { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--ink-2); cursor: pointer; user-select: none; }
+  .simplify input { position: absolute; opacity: 0; pointer-events: none; }
+  .simplify .track { width: 26px; height: 15px; border-radius: 999px; background: var(--rule); position: relative; transition: background .2s; }
+  .simplify .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+                            background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .2s; }
+  .simplify input:checked + .track { background: var(--ink); }
+  .simplify input:checked + .track::after { transform: translateX(11px); }
+  .simplify input:focus-visible + .track { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .simplify.off { opacity: .4; }
+  @media (max-width: 640px) { .simplify { display: none; } }   /* phones: always simple, no switch */
   .toggle { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 2px; background: var(--card); }
   .toggle button { font: inherit; font-size: .8rem; border: 0; background: transparent; color: var(--ink-2);
                    padding: 5px 12px; border-radius: 999px; cursor: pointer; }
@@ -259,10 +270,15 @@
         <div class="sub">Climbing accidents in AAC reports, publication years 1990–2019 (n = 2,724)</div>
         <div class="hint">Click any bar or flow to read the reports behind it.</div>
       </div>
-      <div class="toggle" role="group" aria-label="Middle column">
-        <button type="button" data-view="A" aria-pressed="true">Human vs. environment</button>
-        <button type="button" data-view="C" aria-pressed="false">Factor families</button>
-        <button type="button" data-view="B" aria-pressed="false">What they were doing</button>
+      <div class="controls">
+        <div class="toggle" role="group" aria-label="Middle column">
+          <button type="button" data-mode="factors" aria-pressed="true">What contributed</button>
+          <button type="button" data-mode="activity" aria-pressed="false">What they were doing</button>
+        </div>
+        <!-- larger screens only: collapse factor families into the simple human vs. environment view (phones always get it) -->
+        <label class="simplify" title="Show human vs. environment instead of seven factor families">
+          <input type="checkbox" id="simplify"><span class="track" aria-hidden="true"></span>Simplify
+        </label>
       </div>
     </div>
     <div id="chart" role="img" aria-label="Sankey diagram of climbing accidents from discipline to outcome"></div>
@@ -407,7 +423,14 @@
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const discColor = id => discById.get(id).outline ? "#cfcdc5" : discById.get(id).ramp[2];
 
-  const state = { view: "A", step: 0, filter: null };
+  // Middle column: "factors" mode shows view C (seven factor families) on tablets/computers, or view A
+  // (human vs. environment) on phones or when Simplify is on. "activity" mode shows view B.
+  const PHONE = window.matchMedia("(max-width: 640px)");
+  let simplifyPref = false;
+  try { simplifyPref = localStorage.getItem("cav-simplify") === "1"; } catch (e) {}
+  const state = { mode: "factors", simplify: simplifyPref, view: "A", step: 0, filter: null };
+  const viewFor = () => state.mode === "activity" ? "B" : (PHONE.matches || state.simplify) ? "A" : "C";
+  state.view = viewFor();
   let OUT_EXTRA = 10;
   const chartEl = document.getElementById("chart");
   const tip = document.getElementById("tip");
@@ -921,13 +944,29 @@
   window.addEventListener("hashchange", () => setView(location.hash === "#intake" ? "intake" : "sankey"));
 
   // ================= toggle + scroll =================
-  d3.selectAll(".toggle button").on("click", function () {
-    const v = this.dataset.view;
-    if (v === state.view) return;
+  function applyView(animate) {
+    const v = viewFor();
+    d3.selectAll(".toggle button").attr("aria-pressed", function () { return this.dataset.mode === state.mode; });
+    simplifyEl.checked = state.simplify;
+    simplifyEl.closest(".simplify").classList.toggle("off", state.mode !== "factors");
+    if (v === state.view && animate) return;
     state.view = v;
-    d3.selectAll(".toggle button").attr("aria-pressed", function () { return this.dataset.view === v; });
-    render(true);
+    render(animate);
+  }
+  const simplifyEl = document.getElementById("simplify");
+  simplifyEl.checked = state.simplify;
+  d3.selectAll(".toggle button").on("click", function () {
+    if (this.dataset.mode === state.mode) return;
+    state.mode = this.dataset.mode;
+    applyView(true);
   });
+  simplifyEl.addEventListener("change", () => {
+    state.simplify = simplifyEl.checked;
+    try { localStorage.setItem("cav-simplify", state.simplify ? "1" : "0"); } catch (e) {}
+    if (state.mode !== "factors") { state.mode = "factors"; }   // switching it on/off implies the factor view
+    applyView(true);
+  });
+  PHONE.addEventListener("change", () => applyView(true));   // rotating a tablet or resizing across the breakpoint
 
   /* SCROLLYTELLING (disabled). To re-enable: uncomment this block, the SCROLLYTELLING HTML blocks
      (caption, .steps, scroll cues, scrollama <script>), remove the "single-page layout" CSS override,
