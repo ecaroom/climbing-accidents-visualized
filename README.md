@@ -4,7 +4,7 @@ An interactive look at 2,724 climbing accident reports published by the American
 
 **Live:** https://eliotcaroom.com/climbing-accidents/
 
-- **Sankey:** every accident flows from discipline to a middle column you choose (human vs. environment, seven factor families, or what the climbers were doing), then to the worst outcome. Click any bar or flow to read the reports behind it.
+- **Sankey / Treemap:** every accident flows from discipline to a middle column you choose (human vs. environment, seven factor families, or what the climbers were doing), then to the worst outcome; the Treemap tab nests the same weighted counts as boxes (discipline > middle column > outcome). Click any bar, flow or box to read the reports behind it.
 - **Intake:** describe a planned trip (style, experience, location, date, time of day, party) and get the reported accidents most like it. A heatmap shows which factors were tagged in them and how they ended.
 - **Search:** keyword search across all report text, titles and tags.
 
